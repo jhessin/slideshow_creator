@@ -174,35 +174,61 @@ def normalize_images(
 
 
 # ---------------------------------------------------------------------------
-# Build Concat File
+# Build Video Filter
 # ---------------------------------------------------------------------------
 
 
-def create_concat_file(
-    images: list[Path],
-    config: dict[str, int | str],
-    concat_file: Path,
-) -> None:
-    duration_seconds: float = float(config['duration_hours']) * 3600
-    image_duration: float = float(config['image_duration_seconds'])
+def build_video_filter(
+    image_count: int,
+    image_duration: float,
+    transition_duration: float,
+    fps: int,
+) -> str:
+    if image_count < 2:
+        raise RuntimeError('At least two images are required for transitions.')
 
-    cycle_duration: float = len(images) * image_duration
-    cycles: int = int(duration_seconds // cycle_duration) + 1
+    if transition_duration <= 0:
+        raise RuntimeError('transition_seconds must be greater than 0.')
 
-    with concat_file.open('w', encoding='utf-8') as file:
-        file.write('ffconcat version 1.0\n')
+    if transition_duration >= image_duration:
+        raise RuntimeError(
+            'transition_seconds must be shorter than image_duration_seconds.'
+        )
 
-        for _ in range(cycles):
-            for image in images:
-                image_path: str = image.resolve().as_posix()
+    filters: list[str] = []
 
-                file.write(f"file '{image_path}'\n")
-                file.write(f'duration {image_duration}\n')
+    for index in range(image_count):
+        filters.append(
+            f'[{index}:v]'
+            f'fps={fps},'
+            f'settb=AVTB,'
+            f'format=yuv420p,'
+            f'setpts=PTS-STARTPTS'
+            f'[v{index}]'
+        )
 
-        # FFmpeg requires the final file to be repeated so that
-        # the duration of the final image is honored.
-        final_image: str = images[-1].resolve().as_posix()
-        file.write(f"file '{final_image}'\n")
+    offset: float = image_duration - transition_duration
+
+    filters.append(
+        f'[v0][v1]'
+        f'xfade=transition=fade:duration={transition_duration}:offset={offset}'
+        f'[x1]'
+    )
+
+    for index in range(2, image_count):
+        offset += image_duration - transition_duration
+
+        filters.append(
+            f'[x{index - 1}][v{index}]'
+            f'xfade=transition=fade:duration={transition_duration}:offset={offset}'
+            f'[x{index}]'
+        )
+
+    final_stream: str = f'x{image_count - 1}'
+
+    filters.append(f'[{final_stream}]format=yuv420p[vout]')
+
+    return ';'.join(filters)
 
 
 # ---------------------------------------------------------------------------
@@ -211,47 +237,65 @@ def create_concat_file(
 
 
 def build_command(
+    images: list[Path],
     audio_file: Path,
     config: dict[str, int | str],
     output_file: Path,
-    concat_file: Path,
 ) -> list[str]:
     duration_seconds: float = float(config['duration_hours']) * 3600
+    image_duration: float = float(config['image_duration_seconds'])
+    transition_duration: float = float(config['transition_seconds'])
+    fps: int = int(config['fps'])
+
+    image_step: float = image_duration - transition_duration
+
+    required_image_count: int = int(duration_seconds / image_step) + 1
+
+    repeated_images: list[Path] = [
+        images[index % len(images)] for index in range(required_image_count)
+    ]
+
+    video_filter: str = build_video_filter(
+        image_count=len(repeated_images),
+        image_duration=image_duration,
+        transition_duration=transition_duration,
+        fps=fps,
+    )
 
     command: list[str] = [
         'ffmpeg',
         '-y',
-        # -------------------------------------------------------------------
-        # Repeating slideshow input.
-        # -------------------------------------------------------------------
-        '-f',
-        'concat',
-        '-safe',
-        '0',
-        '-i',
-        str(concat_file),
-        # -------------------------------------------------------------------
-        # Repeating Audio
-        # -------------------------------------------------------------------
+    ]
+
+    for image in repeated_images:
+        command.extend([
+            '-loop',
+            '1',
+            '-t',
+            str(image_duration),
+            '-i',
+            str(image),
+        ])
+
+    command.extend([
         '-stream_loop',
         '-1',
         '-i',
         str(audio_file),
-        # -------------------------------------------------------------------
-        # Video and audio streams.
-        # -------------------------------------------------------------------
+    ])
+
+    command.extend([
+        '-filter_complex',
+        video_filter,
         '-map',
-        '0:v',
+        '[vout]',
         '-map',
-        '1:a',
-        # -------------------------------------------------------------------
-        # Stop the final output at the configured duration
-        # -------------------------------------------------------------------
+        f'{len(repeated_images)}:a',
         '-t',
         str(duration_seconds),
-        # -------------------------------------------------------------------
-        # Video Encoding
-        # -------------------------------------------------------------------
+    ])
+
+    command.extend([
         '-c:v',
         'libx264',
         '-preset',
@@ -260,9 +304,9 @@ def build_command(
         str(config.get('crf', 20)),
         '-pix_fmt',
         'yuv420p',
-        # -------------------------------------------------------------------
-        # Audio Encoding
-        # -------------------------------------------------------------------
+    ])
+
+    command.extend([
         '-c:a',
         'aac',
         '-b:a',
@@ -270,7 +314,7 @@ def build_command(
         '-movflags',
         '+faststart',
         str(output_file),
-    ]
+    ])
 
     return command
 
@@ -337,11 +381,8 @@ def main() -> None:
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
         output_file: Path = OUTPUT_DIR / config['output_filename']
-        concat_file: Path = TEMP_DIR / '.slideshow_concat.txt'
 
         images = normalize_images(images, config)
-
-        create_concat_file(images, config, concat_file)
 
         print_summary(
             audio_file,
@@ -351,10 +392,10 @@ def main() -> None:
         )
 
         command: list[str] = build_command(
+            images,
             audio_file,
             config,
             output_file,
-            concat_file,
         )
 
         print('Starting FFmpeg...')
@@ -364,9 +405,6 @@ def main() -> None:
             command,
             check=True,
         )
-
-        if concat_file.exists():
-            concat_file.unlink()
 
         print()
         print('=' * 60)
