@@ -1,0 +1,9 @@
+{
+  "duration_hours": 8,
+  "image_duration_seconds": 90,
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "transition_seconds": 5,
+  "output_filename": "sleep_time.mp4"
+}
