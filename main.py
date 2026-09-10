@@ -212,7 +212,6 @@ def create_concat_file(
 
 def build_command(
     audio_file: Path,
-    images: list[Path],
     config: dict[str, int | str],
     output_file: Path,
     concat_file: Path,
@@ -340,9 +339,9 @@ def main() -> None:
         output_file: Path = OUTPUT_DIR / config['output_filename']
         concat_file: Path = TEMP_DIR / '.slideshow_concat.txt'
 
-        normalized_images: list[Path] = normalize_images(images, config)
+        images = normalize_images(images, config)
 
-        create_concat_file(normalized_images, config, concat_file)
+        create_concat_file(images, config, concat_file)
 
         print_summary(
             audio_file,
@@ -353,7 +352,6 @@ def main() -> None:
 
         command: list[str] = build_command(
             audio_file,
-            images,
             config,
             output_file,
             concat_file,

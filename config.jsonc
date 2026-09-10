@@ -2,10 +2,14 @@
   // "duration_hours": 8,
   "duration_hours": 0.5,
   // "image_duration_seconds": 600,
-  "image_duration_seconds": 60,
+  "image_duration_seconds": 15,
+  // "transition_seconds": 5,
+  "transition_seconds": 2,
   "width": 1920,
   "height": 1080,
   "fps": 30,
-  "transition_seconds": 5,
+  "preset": "medium",
+  "crf": 20,
+  "audio_bitrate": "192k",
   "output_filename": "sleep_time.mp4"
 }
