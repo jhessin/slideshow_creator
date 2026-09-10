@@ -1,18 +1,23 @@
-import json
 import subprocess
 import sys
 from pathlib import Path
 from typing import Dict
+
+import json5
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
 PROJECT_DIR = Path(__file__).resolve().parent
+
 AUDIO_DIR = PROJECT_DIR / 'audio'
 IMAGE_DIR = PROJECT_DIR / 'images'
+
+TEMP_DIR = PROJECT_DIR / '.temp'
 OUTPUT_DIR = PROJECT_DIR / 'output'
-CONFIG_FILE = PROJECT_DIR / 'config.json'
+
+CONFIG_FILE = PROJECT_DIR / 'config.jsonc'
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +30,7 @@ def load_config() -> Dict:
         raise RuntimeError(f'Configuration file not found:\n{CONFIG_FILE}')
 
     with CONFIG_FILE.open('r', encoding='utf-8') as file:
-        return json.load(file)
+        return json5.load(file)
 
 
 # ---------------------------------------------------------------------------
@@ -120,38 +125,84 @@ def check_ffmpeg() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Build video filter
+# Normalize Images
 # ---------------------------------------------------------------------------
 
 
-def build_filter(images, config) -> str:
-    width = int(config['width'])
-    height = int(config['height'])
-    fps = int(config['fps'])
-    image_duration = float(config['image_duration_seconds'])
+def normalize_images(
+    images: list[Path],
+    config: dict[str, int | str],
+) -> list[Path]:
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
-    filter_parts = []
+    width: int = int(config['width'])
+    height: int = int(config['height'])
 
-    for index in range(len(images)):
-        filter_parts.append(
-            f'[{index + 1}:v]'
-            f'scale={width}:{height}:'
-            f'force_original_aspect_ratio=decrease,'
-            f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,'
-            f'setsar=1,'
-            f'fps={fps},'
-            f'trim=duration={image_duration},'
-            f'setpts=PTS-STARTPTS'
-            f'[v{index}]'
+    normalized_images: list[Path] = []
+
+    for index, image in enumerate(images):
+        output_image: Path = TEMP_DIR / f'{index:04d}.png'
+
+        command: list[str] = [
+            'ffmpeg',
+            '-y',
+            '-i',
+            str(image),
+            '-vf',
+            (
+                f'scale={width}:{height}:'
+                'force_original_aspect_ratio=decrease,'
+                f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,'
+                'setsar=1,'
+                'format=yuv420p'
+            ),
+            '-frames:v',
+            '1',
+            str(output_image),
+        ]
+
+        subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
         )
 
-    input_streams = ''.join(f'[v{index}]' for index in range(len(images)))
+        normalized_images.append(output_image)
 
-    filter_parts.append(
-        f'{input_streams}concat=n={len(images)}:v=1:a=0,setpts=PTS-STARTPTS[video]'
-    )
+    return normalized_images
 
-    return ';'.join(filter_parts)
+
+# ---------------------------------------------------------------------------
+# Build Concat File
+# ---------------------------------------------------------------------------
+
+
+def create_concat_file(
+    images: list[Path],
+    config: dict[str, int | str],
+    concat_file: Path,
+) -> None:
+    duration_seconds: float = float(config['duration_hours']) * 3600
+    image_duration: float = float(config['image_duration_seconds'])
+
+    cycle_duration: float = len(images) * image_duration
+    cycles: int = int(duration_seconds // cycle_duration) + 1
+
+    with concat_file.open('w', encoding='utf-8') as file:
+        file.write('ffconcat version 1.0\n')
+
+        for _ in range(cycles):
+            for image in images:
+                image_path: str = image.resolve().as_posix()
+
+                file.write(f"file '{image_path}'\n")
+                file.write(f'duration {image_duration}\n')
+
+        # FFmpeg requires the final file to be repeated so that
+        # the duration of the final image is honored.
+        final_image: str = images[-1].resolve().as_posix()
+        file.write(f"file '{final_image}'\n")
 
 
 # ---------------------------------------------------------------------------
@@ -159,78 +210,68 @@ def build_filter(images, config) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_command(audio_file, images, config, output_file) -> list[str]:
+def build_command(
+    audio_file: Path,
+    images: list[Path],
+    config: dict[str, int | str],
+    output_file: Path,
+    concat_file: Path,
+) -> list[str]:
     duration_seconds = float(config['duration_hours']) * 3600
 
     command = [
         'ffmpeg',
         '-y',
         # -------------------------------------------------------------------
-        # Audio
+        # Repeating slideshow input.
+        # -------------------------------------------------------------------
+        '-f',
+        'concat',
+        '-safe',
+        '0',
+        '-i',
+        str(concat_file),
+        # -------------------------------------------------------------------
+        # Repeating Audio
         # -------------------------------------------------------------------
         '-stream_loop',
         '-1',
         '-i',
         str(audio_file),
         # -------------------------------------------------------------------
-        # Images
-        #
-        # Each image becomes a normal FFmpeg input.
-        # -loop 1 makes FFmpeg continuously generate frames from the image.
+        # Video and audio streams.
         # -------------------------------------------------------------------
-    ]
-
-    for image in images:
-        command.extend([
-            '-loop',
-            '1',
-            '-i',
-            str(image),
-        ])
-
-    # -----------------------------------------------------------------------
-    # Filter graph
-    # -----------------------------------------------------------------------
-
-    filter_complex = build_filter(images, config)
-
-    command.extend([
-        '-filter_complex',
-        filter_complex,
-        # Video from our filter graph.
         '-map',
-        '[video]',
-        # Audio from input 0.
+        '0:v',
         '-map',
-        '0:a',
-        # Exact output duration.
+        '1:a',
+        # -------------------------------------------------------------------
+        # Stop the final output at the configured duration
+        # -------------------------------------------------------------------
         '-t',
         str(duration_seconds),
         # -------------------------------------------------------------------
-        # Video encoding
+        # Video Encoding
         # -------------------------------------------------------------------
         '-c:v',
         'libx264',
         '-preset',
-        config.get('preset', 'medium'),
+        str(config.get('preset', 'medium')),
         '-crf',
         str(config.get('crf', 20)),
         '-pix_fmt',
         'yuv420p',
         # -------------------------------------------------------------------
-        # Audio encoding
+        # Audio Encoding
         # -------------------------------------------------------------------
         '-c:a',
         'aac',
         '-b:a',
-        config.get('audio_bitrate', '192k'),
-        # -------------------------------------------------------------------
-        # MP4 optimization
-        # -------------------------------------------------------------------
+        str(config.get('audio_bitrate', '192k')),
         '-movflags',
         '+faststart',
         str(output_file),
-    ])
+    ]
 
     return command
 
@@ -293,7 +334,12 @@ def main():
 
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-        output_file = OUTPUT_DIR / config['output_filename']
+        output_file: Path = OUTPUT_DIR / config['output_filename']
+        concat_file: Path = TEMP_DIR / '.slideshow_concat.txt'
+
+        normalized_images: list[Path] = normalize_images(images, config)
+
+        create_concat_file(normalized_images, config, concat_file)
 
         print_summary(
             audio_file,
@@ -307,6 +353,7 @@ def main():
             images,
             config,
             output_file,
+            concat_file,
         )
 
         print('Starting FFmpeg...')
@@ -316,6 +363,9 @@ def main():
             command,
             check=True,
         )
+
+        if concat_file.exists():
+            concat_file.unlink()
 
         print()
         print('=' * 60)

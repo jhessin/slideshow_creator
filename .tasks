@@ -6,7 +6,7 @@
 
 # shell command, use quotation for filenames containing spaces
 # check ":AsyncTaskMacro" to see available macros
-command=python main.py
+command=uv run main.py
 
 # working directory, can change to $(VIM_ROOT) for project root
 cwd=<root>
