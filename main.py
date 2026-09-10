@@ -9,15 +9,15 @@ import json5
 # Paths
 # ---------------------------------------------------------------------------
 
-PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR: Path = Path(__file__).resolve().parent
 
-AUDIO_DIR = PROJECT_DIR / 'audio'
-IMAGE_DIR = PROJECT_DIR / 'images'
+AUDIO_DIR: Path = PROJECT_DIR / 'audio'
+IMAGE_DIR: Path = PROJECT_DIR / 'images'
 
-TEMP_DIR = PROJECT_DIR / '.temp'
-OUTPUT_DIR = PROJECT_DIR / 'output'
+TEMP_DIR: Path = PROJECT_DIR / '.temp'
+OUTPUT_DIR: Path = PROJECT_DIR / 'output'
 
-CONFIG_FILE = PROJECT_DIR / 'config.jsonc'
+CONFIG_FILE: Path = PROJECT_DIR / 'config.jsonc'
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ def load_config() -> Dict:
 
 
 def find_audio() -> Path:
-    supported_extensions = {
+    supported_extensions: set[str] = {
         '.mp3',
         '.wav',
         '.m4a',
@@ -48,7 +48,7 @@ def find_audio() -> Path:
         '.ogg',
     }
 
-    files = sorted(
+    files: list[Path] = sorted(
         [
             file
             for file in AUDIO_DIR.iterdir()
@@ -71,7 +71,7 @@ def find_audio() -> Path:
 
 
 def find_images() -> list[Path]:
-    supported_extensions = {
+    supported_extensions: set[str] = {
         '.jpg',
         '.jpeg',
         '.png',
@@ -79,7 +79,7 @@ def find_images() -> list[Path]:
         '.bmp',
     }
 
-    images = sorted(
+    images: list[Path] = sorted(
         [
             file
             for file in IMAGE_DIR.iterdir()
@@ -101,7 +101,7 @@ def find_images() -> list[Path]:
 
 def check_ffmpeg() -> None:
     try:
-        result = subprocess.run(
+        result: subprocess.CompletedProcess[str] = subprocess.run(
             ['ffmpeg', '-version'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -109,7 +109,7 @@ def check_ffmpeg() -> None:
             check=True,
         )
 
-        first_line = result.stdout.splitlines()[0]
+        first_line: str = result.stdout.splitlines()[0]
 
         print(f'FFmpeg found: {first_line}')
 
@@ -217,9 +217,9 @@ def build_command(
     output_file: Path,
     concat_file: Path,
 ) -> list[str]:
-    duration_seconds = float(config['duration_hours']) * 3600
+    duration_seconds: float = float(config['duration_hours']) * 3600
 
-    command = [
+    command: list[str] = [
         'ffmpeg',
         '-y',
         # -------------------------------------------------------------------
@@ -282,10 +282,13 @@ def build_command(
 
 
 def print_summary(
-    audio_file: Path, images: list[Path], config: Dict, output_file: Path
-):
-    duration_hours = float(config['duration_hours'])
-    duration_seconds = duration_hours * 3600
+    audio_file: Path,
+    images: list[Path],
+    config: Dict,
+    output_file: Path,
+) -> None:
+    duration_hours: float = float(config['duration_hours'])
+    duration_seconds: float = duration_hours * 3600
 
     print()
     print('=' * 60)
@@ -318,7 +321,7 @@ def print_summary(
 # ---------------------------------------------------------------------------
 
 
-def main():
+def main() -> None:
     try:
         print('Checking FFmpeg...')
         check_ffmpeg()
@@ -330,7 +333,7 @@ def main():
         audio_file: Path = find_audio()
 
         print('Finding images...')
-        images = find_images()
+        images: list[Path] = find_images()
 
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -348,7 +351,7 @@ def main():
             output_file,
         )
 
-        command = build_command(
+        command: list[str] = build_command(
             audio_file,
             images,
             config,
