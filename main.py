@@ -261,8 +261,13 @@ def build_command(
     transition_duration: float = float(config['transition_seconds'])
     fps: int = int(config['fps'])
 
+    cycle_images: list[Path] = [
+        *images,
+        images[0],
+    ]
+
     video_filter: str = build_video_filter(
-        image_count=len(images),
+        image_count=len(cycle_images),
         image_duration=image_duration,
         transition_duration=transition_duration,
         fps=fps,
@@ -274,7 +279,7 @@ def build_command(
         '-y',
     ]
 
-    for image in images:
+    for image in cycle_images:
         command.extend([
             '-loop',
             '1',
@@ -297,7 +302,7 @@ def build_command(
         '-map',
         '[vout]',
         '-map',
-        f'{len(images)}:a',
+        f'{len(cycle_images)}:a',
         '-t',
         str(duration_seconds),
     ])
