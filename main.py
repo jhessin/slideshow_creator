@@ -183,6 +183,7 @@ def build_video_filter(
     image_duration: float,
     transition_duration: float,
     fps: int,
+    total_duration: float,
 ) -> str:
     if image_count < 2:
         raise RuntimeError('At least two images are required for transitions.')
@@ -226,7 +227,20 @@ def build_video_filter(
 
     final_stream: str = f'x{image_count - 1}'
 
-    filters.append(f'[{final_stream}]format=yuv420p[vout]')
+    cycle_duration: float = (
+        image_count * image_duration - (image_count - 1) * transition_duration
+    )
+
+    cycle_frames: int = int(cycle_duration * fps)
+
+    filters.append(
+        f'[{final_stream}]'
+        f'loop=loop=-1:size={cycle_frames}:start=0,'
+        f'setpts=PTS-STARTPTS,'
+        f'trim=duration={total_duration},'
+        f'setpts=PTS-STARTPTS'
+        f'[vout]'
+    )
 
     return ';'.join(filters)
 
@@ -247,19 +261,12 @@ def build_command(
     transition_duration: float = float(config['transition_seconds'])
     fps: int = int(config['fps'])
 
-    image_step: float = image_duration - transition_duration
-
-    required_image_count: int = int(duration_seconds / image_step) + 1
-
-    repeated_images: list[Path] = [
-        images[index % len(images)] for index in range(required_image_count)
-    ]
-
     video_filter: str = build_video_filter(
-        image_count=len(repeated_images),
+        image_count=len(images),
         image_duration=image_duration,
         transition_duration=transition_duration,
         fps=fps,
+        total_duration=duration_seconds,
     )
 
     command: list[str] = [
@@ -267,7 +274,7 @@ def build_command(
         '-y',
     ]
 
-    for image in repeated_images:
+    for image in images:
         command.extend([
             '-loop',
             '1',
@@ -290,7 +297,7 @@ def build_command(
         '-map',
         '[vout]',
         '-map',
-        f'{len(repeated_images)}:a',
+        f'{len(images)}:a',
         '-t',
         str(duration_seconds),
     ])
